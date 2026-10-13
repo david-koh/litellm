@@ -4709,7 +4709,16 @@ async def info_key_fn(
 
         return {"key": key, "info": await attach_object_permission_to_dict(key_info_dict, prisma_client)}
     except Exception as e:
-        raise handle_exception_on_proxy(e)
+        proxy_exception: Final[ProxyException] = handle_exception_on_proxy(e)
+        if proxy_exception.code == "500":
+            raise ProxyException(
+                message="Internal server error",
+                type="internal_server_error",
+                param=None,
+                code=500,
+                headers=proxy_exception.headers,
+            ) from e
+        raise proxy_exception
 
 
 async def _find_deleted_key_info(

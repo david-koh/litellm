@@ -4037,6 +4037,66 @@ async def test_view_spend_logs_summarize_parameter(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_view_spend_logs_does_not_expose_database_errors(client, monkeypatch):
+    internal_detail = "db-internal-marker"
+    mock_prisma_client = MagicMock()
+    mock_prisma_client.db.litellm_spendlogs.find_many = AsyncMock(side_effect=RuntimeError(internal_detail))
+    monkeypatch.setattr("litellm.proxy.proxy_server.prisma_client", mock_prisma_client)
+    app.dependency_overrides[ps.user_api_key_auth] = lambda: UserAPIKeyAuth(user_role=LitellmUserRoles.PROXY_ADMIN)
+
+    try:
+        response = client.get("/spend/logs", headers={"Authorization": "Bearer sk-test"})
+    finally:
+        app.dependency_overrides.pop(ps.user_api_key_auth, None)
+
+    assert response.status_code == 500
+    assert internal_detail not in response.text
+
+
+@pytest.mark.asyncio
+async def test_view_spend_logs_keeps_call_id_on_sanitized_error(client, monkeypatch):
+    mock_prisma_client = MagicMock()
+    mock_prisma_client.db.litellm_spendlogs.find_many = AsyncMock(
+        side_effect=ProxyException(
+            message="db-internal-marker",
+            type="internal_error",
+            param=None,
+            code=500,
+            headers={"x-litellm-call-id": "call-1"},
+        )
+    )
+    monkeypatch.setattr("litellm.proxy.proxy_server.prisma_client", mock_prisma_client)
+    app.dependency_overrides[ps.user_api_key_auth] = lambda: UserAPIKeyAuth(user_role=LitellmUserRoles.PROXY_ADMIN)
+
+    try:
+        response = client.get("/spend/logs", headers={"Authorization": "Bearer sk-test"})
+    finally:
+        app.dependency_overrides.pop(ps.user_api_key_auth, None)
+
+    assert response.status_code == 500
+    assert "db-internal-marker" not in response.text
+    assert response.headers["x-litellm-call-id"] == "call-1"
+
+
+@pytest.mark.asyncio
+async def test_view_spend_logs_keeps_client_errors(client, monkeypatch):
+    mock_prisma_client = MagicMock()
+    mock_prisma_client.db.litellm_spendlogs.find_many = AsyncMock(
+        side_effect=HTTPException(status_code=400, detail="invalid filter")
+    )
+    monkeypatch.setattr("litellm.proxy.proxy_server.prisma_client", mock_prisma_client)
+    app.dependency_overrides[ps.user_api_key_auth] = lambda: UserAPIKeyAuth(user_role=LitellmUserRoles.PROXY_ADMIN)
+
+    try:
+        response = client.get("/spend/logs", headers={"Authorization": "Bearer sk-test"})
+    finally:
+        app.dependency_overrides.pop(ps.user_api_key_auth, None)
+
+    assert response.status_code == 400
+    assert "invalid filter" in response.text
+
+
+@pytest.mark.asyncio
 async def test_view_spend_logs_bounds_row_count(client, monkeypatch):
     """Every /spend/logs read path must send take=SPEND_LOGS_PAGINATION_COUNT_CAP to Prisma (LIT-6284)."""
     captured_find_many_kwargs = []

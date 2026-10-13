@@ -6662,6 +6662,26 @@ async def test_info_key_fn_unknown_key_still_404s(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_info_key_fn_does_not_expose_database_errors(monkeypatch):
+    from litellm.proxy.management_endpoints.key_management_endpoints import info_key_fn
+
+    internal_detail = "db-internal-marker"
+    mock_prisma_client = AsyncMock()
+    monkeypatch.setattr("litellm.proxy.proxy_server.prisma_client", mock_prisma_client)
+    mock_prisma_client.db.litellm_verificationtoken.find_unique = AsyncMock(side_effect=RuntimeError(internal_detail))
+
+    with pytest.raises(ProxyException) as exc_info:
+        await info_key_fn(
+            key="hashed_key",
+            user_api_key_dict=UserAPIKeyAuth(user_role=LitellmUserRoles.PROXY_ADMIN, api_key="sk-admin"),
+        )
+
+    assert exc_info.value.code == "500"
+    assert exc_info.value.message
+    assert internal_detail not in exc_info.value.message
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("blocked", "expires", "expected_status"),
     [

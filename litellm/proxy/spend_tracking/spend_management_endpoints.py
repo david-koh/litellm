@@ -3651,21 +3651,23 @@ async def view_spend_logs(
         return None
 
     except Exception as e:
-        if isinstance(e, HTTPException):
+        if isinstance(e, HTTPException) and e.status_code != status.HTTP_500_INTERNAL_SERVER_ERROR:
             raise ProxyException(
                 message=getattr(e, "detail", f"/spend/logs Error({e})"),
                 type="internal_error",
                 param=getattr(e, "param", "None"),
                 code=getattr(e, "status_code", status.HTTP_500_INTERNAL_SERVER_ERROR),
             )
-        elif isinstance(e, ProxyException):
+        if isinstance(e, ProxyException) and e.code != str(status.HTTP_500_INTERNAL_SERVER_ERROR):
             raise e
+        verbose_proxy_logger.exception("Exception in /spend/logs")
         raise ProxyException(
-            message="/spend/logs Error" + str(e),
+            message="Internal server error",
             type="internal_error",
-            param=getattr(e, "param", "None"),
+            param=None,
             code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+            headers=e.headers if isinstance(e, ProxyException) else None,
+        ) from e
 
 
 @router.post(
